@@ -77,6 +77,9 @@ function Ring({ value, label, sub, size = 168, stroke = 12 }) {
 const Empty = ({ icon, title, text, cta, go }) => html`<div class="card empty"><div class="ic"><${Icon} n=${icon} s=${26} /></div><h3>${title}</h3><p>${text}</p>${cta && html`<button class="btn" onClick=${() => go(cta[0])}>${cta[1]}</button>`}</div>`;
 const Head = ({ eyebrow, title, lede }) => html`<header class="head"><div class="eyebrow">${eyebrow}</div><h1 class="h1">${title}</h1>${lede && html`<p class="lede">${lede}</p>`}</header>`;
 const KV = ({ rows }) => html`<dl class="kv">${rows.filter(Boolean).map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`;
+// The weight cap in force: fixed at close, otherwise the current setting.
+const capNow = () => { const s = E.S(); return s.locked ? s.locked.capValue : E.capValue(); };
+const Wt = ({ w }) => { const cap = capNow(); return cap != null && Number(w) > cap ? html`<span class="wt-cap" title=${`${fmt(w)} shares, capped at ${fmt(cap)}`}><s>${fmt(w)}</s> ${fmt(cap)}</span>` : fmt(w); };
 
 function useStore() {
   const [, force] = useState(0);
@@ -115,7 +118,7 @@ function BallotScreen({ a, pick, onPick, onSeal, disabled, voted, demo }) {
   return html`<${AppHead} a=${a} />
     <div><span class="chip green" style="background:#e3f6e9;color:#1a7f3c"><span class="dot pulse"></span> Item ${s.meeting.no} · voting open</span></div>
     <div class="ios-t mt8">${s.meeting.item}</div>
-    <div class="ios-s">You vote with ${fmt(a.shares)} shares${a.proxy === 'chair' ? ' · your proxy is the chair' : ''}</div>
+    <div class="ios-s">You vote with ${fmt(a.shares)} shares${capNow() != null && a.shares > capNow() ? `, counted as ${fmt(capNow())} under the cap` : ''}${a.proxy === 'chair' ? ' · your proxy is the chair' : ''}</div>
     <div class="group">${OPTIONS.map((o) => html`<button class=${'opt' + (pick === o.key ? ' on' : '')} onClick=${() => onPick && onPick(o.key)} disabled=${disabled}>
       <span class="radio">${pick === o.key && html`<${Icon} n="check" s=${13} w="3" />`}</span><span><b>${o.label}</b>${o.hint && html`<small>${o.hint}</small>`}</span></button>`)}</div>
     ${voted && html`<div class="ios-note" style="margin-top:12px">You already voted. Sending again replaces it.</div>`}
@@ -258,6 +261,42 @@ function KeyGraph({ dkg }) {
   </svg>`;
 }
 
+// Weight per attendee against the cap line. Anything above the cap is hatched and does not count.
+function WeightBars() {
+  const s = E.S();
+  const r = s.locked || s.rules;
+  if (r.ignoreWeight) return html`<div class="wb"><p class="small muted">Voting weight is ignored, so every attendee counts as 1 and there is nothing to cap.</p></div>`;
+  const cap = capNow();
+  const sm = E.sums(false);
+  const onPresent = r.capMode === 'present';
+  const base = onPresent ? sm.present : sm.all;
+  const baseLabel = onPresent ? 'present votes' : 'all votes';
+  const max = Math.max(...s.attendees.map((a) => a.shares), cap || 0);
+  const pc = (x) => `${Math.round((x / base) * 100)} %`;
+  const x = (v) => (v / max) * 100 + '%';
+  const top = s.attendees.reduce((m, a) => (a.shares > m.shares ? a : m));
+  const over = cap != null ? s.attendees.filter((a) => a.shares > cap) : [];
+  const first = (a) => a.name.split(' ')[0];
+  return html`<div class="wb">
+    <div class="wb-h"><span>Weight per attendee</span><span>${cap != null ? 'counts as' : 'shares'} · % of ${baseLabel}</span></div>
+    ${s.attendees.map((a, i) => {
+      const capped = cap != null && a.shares > cap;
+      const eff = capped ? cap : a.shares;
+      const here = E.isPresent(a);
+      return html`<div class=${'wb-r' + (here ? '' : ' away')} title=${`${a.name}: ${fmt(a.shares)} shares${capped ? `, counts as ${fmt(cap)}` : ''}${here ? '' : ', absent'}`}>
+        <span class="wb-n"><${Av} a=${a} s=${22} /><span>${first(a)}</span></span>
+        <div class="wb-t"><div class="wb-f" style=${{ width: x(eff), borderRadius: capped ? '0' : '' }}></div>${capped && html`<div class="wb-x" style=${{ left: x(cap), width: x(a.shares - cap) }}></div>`}${cap != null && html`<div class="wb-cap" style=${{ left: x(cap) }}>${i === 0 && html`<span>cap ${fmt(cap)}</span>`}</div>`}</div>
+        <span class="wb-v">${capped ? html`<s>${fmt(a.shares)}</s> <b>${fmt(cap)}</b>` : html`<b>${fmt(a.shares)}</b>`}<small>${here || !onPresent ? pc(eff) : 'absent'}</small></span>
+      </div>`;
+    })}
+    <div class="wb-foot">${cap == null
+      ? html`<span>${first(top)} alone holds ${pc(top.shares)} of all votes. A cap limits what any one shareholder counts for.</span>${!s.locked && html`<button class="btn ghost sm" onClick=${() => { s.rules.capMode = 'all'; s.rules.capPct = 25; E.emit(); }}>Try the cap from your guide: 25 % of all votes</button>`}`
+      : over.length
+        ? html`<span><b>${over.map(first).join(', ')}</b> ${over.length === 1 ? 'counts' : 'count'} for ${fmt(cap)} instead of ${over.map((a) => fmt(a.shares)).join(', ')}. The cap is ${r.capPct} % of ${baseLabel} (${fmt(base)}), and the hatched part does not count.</span>`
+        : html`<span>Nobody is above the cap of ${fmt(cap)} (${r.capPct} % of ${baseLabel}).</span>`}</div>
+  </div>`;
+}
+
 function Setup({ go }) {
   const s = useStore();
   const r = s.rules;
@@ -291,7 +330,8 @@ function Setup({ go }) {
           <div class="set"><div class="set-l"><div class="set-t">Majority base</div><div class="set-d">What the votes for each option are divided by.</div><div class="mt8">${badge(false)}</div></div><div class="set-r"><${Seg} value=${r.base} options=${E.BASES} onChange=${(v) => set('base', v)} /></div></div>
           <div class="set"><div class="set-l"><div class="set-t">Non-voters count as abstention</div><div class="set-d">Present attendees who did not vote are added to abstentions.</div><div class="mt8">${badge(false)}</div></div><div class="set-r"><${Switch} on=${r.nonVoterAbstain} label="Non-voters count as abstention" onChange=${(v) => set('nonVoterAbstain', v)} /></div></div>
           <div class="set"><div class="set-l"><div class="set-t">Ignore voting weight</div><div class="set-d">One person, one vote, regardless of shares.</div><div class="mt8">${badge(true)}</div></div><div class="set-r"><${Switch} on=${r.ignoreWeight} label="Ignore voting weight" disabled=${locked} onChange=${(v) => set('ignoreWeight', v)} /></div></div>
-          <div class="set"><div class="set-l"><div class="set-t">Weight cap</div><div class="set-d">${cap != null ? `Nobody counts for more than ${fmt(cap)} shares.` : 'No single shareholder decides alone.'}</div><div class="mt8">${badge(true)}</div></div><div class="set-r"><${Seg} value=${r.capMode} disabled=${locked || r.ignoreWeight} options=${[['off', 'Off'], ['all', '% of all'], ['present', '% of present']]} onChange=${(v) => set('capMode', v)} />${r.capMode !== 'off' && html`<input class="input num" style="width:70px" type="number" min="1" max="100" value=${r.capPct} disabled=${locked || r.ignoreWeight} onChange=${(e) => set('capPct', Math.max(1, Math.min(100, +e.target.value || 25)))} aria-label="Cap percentage" /><span class="small muted">%</span>`}</div></div>
+          <div class="set"><div class="set-l"><div class="set-t">Weight cap</div><div class="set-d">${cap != null ? `Nobody counts for more than ${fmt(cap)} shares.` : 'Limits how much any one shareholder counts for.'}</div><div class="mt8">${badge(true)}</div></div><div class="set-r"><${Seg} value=${r.capMode} disabled=${locked || r.ignoreWeight} options=${[['off', 'Off'], ['all', '% of all'], ['present', '% of present']]} onChange=${(v) => set('capMode', v)} />${r.capMode !== 'off' && html`<input class="input num" style="width:70px" type="number" min="1" max="100" value=${r.capPct} disabled=${locked || r.ignoreWeight} onChange=${(e) => set('capPct', Math.max(1, Math.min(100, +e.target.value || 25)))} aria-label="Cap percentage" /><span class="small muted">%</span>`}</div></div>
+          <${WeightBars} />
           <div class="callout warn mt16"><span class="ic"><${Icon} n="lock" s=${18} /></span><span><b>Why some settings lock.</b> Weighting and the cap change what is added up inside the encryption. Opening a second total with different weights would let anyone compare the two and work out individual votes, so these are fixed when voting closes. Everything else is arithmetic on the opened totals.</span></div>
         </div>
       </div>
@@ -333,7 +373,7 @@ function Inspector() {
     <div class="callout"><span class="ic"><${Icon} n="eyeoff" s=${18} /></span><span><b>Stayed on the phone:</b> the choice <span class="vec">${lc.vote.map((v) => html`<span class=${v ? 'one' : ''}>${v}</span>`)}</span> (${OPTIONS.find((o) => o.key === lc.choice).label}) and the encryption randomness. Everything below is public.</span></div>
     <div class="timeline mt24">
       <div class="tl"><span class="tl-n">1</span><div class="grow"><div class="tl-t">Credential from MIXX</div><div class="tl-d">${a.name} may vote with ${fmt(att.weight)} shares. The ballot box only sees a pseudonym.</div>
-        <div class="hood mt12"><${KV} rows=${[['Pseudonym', html`<${Hex} v=${att.pseudonym} />`], ['Weight', html`<span>${fmt(att.weight)}</span>`], ['Vote counter', html`<span>${String(att.nonce)}${att.nonce > 1n ? ' (replaces earlier vote)' : ''}</span>`], ['One-time key', html`<${Hex} v=${att.vk} />`], ['MIXX signature', html`<${Hex} v=${att.signature} />`]]} /></div></div></div>
+        <div class="hood mt12"><${KV} rows=${[['Pseudonym', html`<${Hex} v=${att.pseudonym} />`], ['Weight', html`<span>${fmt(att.weight)}${capNow() != null && att.weight > BigInt(capNow()) ? ` (counted as ${fmt(capNow())} under the cap)` : ''}</span>`], ['Vote counter', html`<span>${String(att.nonce)}${att.nonce > 1n ? ' (replaces earlier vote)' : ''}</span>`], ['One-time key', html`<${Hex} v=${att.vk} />`], ['MIXX signature', html`<${Hex} v=${att.signature} />`]]} /></div></div></div>
       <div class="tl"><span class="tl-n">2</span><div class="grow"><div class="tl-t">Encrypted ${OPTIONS.length} numbers <${Chip}>${ms(b.timing.encrypt)}<//></div><div class="tl-d">Exponential ElGamal under the election key: C₁ = r·G, C₂ = r·PK + m·G. A 1 and a 0 look equally random.</div>
         <div class="hood mt12">${b.detail.cts.map((c, j) => html`<div class="sec">${OPTIONS[j].label}</div><${KV} rows=${[['C₁', html`<${Hex} v=${C.ph(c.c1)} />`], ['C₂', html`<${Hex} v=${C.ph(c.c2)} />`]]} />`)}</div></div></div>
       <div class="tl"><span class="tl-n">3</span><div class="grow"><div class="tl-t">Proved it is one valid vote <${Chip}>${ms(b.timing.range + b.timing.budget)}<//></div><div class="tl-d">${OPTIONS.length} range proofs (each value is 0 or 1) and 1 sum proof (the values add up to exactly 1). In every range proof one branch is real and one is simulated; nobody can tell which.</div>
@@ -411,7 +451,7 @@ function Live({ go }) {
     <div class="card mt24">
       <div class="card-h"><div><div class="card-t">Ballot box</div><div class="card-s">Public. Every sealed ballot as it arrives, checked on entry. Voters find theirs with the tracking code.</div></div><${Chip} c="blue">${s.ballots.length} received<//></div>
       ${s.ballots.length === 0 ? html`<p class="muted">No ballots yet. <button class="link" onClick=${() => go('vote')}>Cast a vote</button></p>` : html`<div class="scroll-x"><table class="tbl"><thead><tr><th>Time</th><th>Tracking code</th><th>Voter (pseudonym)</th><th class="r">Weight</th><th>Ballot</th><th>Check on entry</th><th>Status</th></tr></thead><tbody>
-        ${[...s.ballots].reverse().map((b) => html`<tr key=${b.seq} class="new"><td class="num muted">${new Date(b.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td><td class="mono" style="font-size:13px">${b.code}</td><td><${Hex} v=${C.toHex(b.envelope.pseudonym)} n=${5} light /></td><td class="r num">${fmt(b.weight)}</td><td class="muted small">${OPTIONS.length} ciphertexts + proofs</td>
+        ${[...s.ballots].reverse().map((b) => html`<tr key=${b.seq} class="new"><td class="num muted">${new Date(b.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td><td class="mono" style="font-size:13px">${b.code}</td><td><${Hex} v=${C.toHex(b.envelope.pseudonym)} n=${5} light /></td><td class="r num"><${Wt} w=${b.weight} /></td><td class="muted small">${OPTIONS.length} ciphertexts + proofs</td>
           <td>${b.check === 'ok' ? html`<span class="row" style="gap:6px"><${Check} s=${18} /><span class="small">Proofs valid</span></span>` : b.check === 'checking' ? html`<span class="row" style="gap:6px"><span class="spinner dark"></span><span class="small muted">Checking</span></span>` : html`<span class="row" style="gap:6px"><${Check} st="bad" s=${18} /><span class="small">${b.check}</span></span>`}</td>
           <td>${b.replaced ? html`<${Chip} c="orange">Replaced by newer vote<//>` : html`<${Chip} c="green">Counts<//>`}</td></tr>`)}</tbody></table></div>`}
     </div>
@@ -439,14 +479,14 @@ function Count({ go }) {
     <${Head} eyebrow="Step 4 · The count" title="Count without opening a ballot" lede="Every step works on sealed data and leaves public evidence behind. The only thing ever decrypted is the total per option." />
     <div class="pipe">
       <${PipeStep} n="1" state=${stState(1, 2)} title="Check every ballot" sub="Credential signed by MIXX, valid zero-knowledge proofs, intact voter signature. Then the latest vote per voter wins.">
-        ${ph === 'ready' ? html`<button class="btn" onClick=${() => E.runCount()}><${Icon} n="sigma" s=${17} /> Start counting</button>` : html`<div class="scroll-x"><table class="tbl"><thead><tr><th>Ballot</th><th class="hide-sm">Voter</th><th class="r">Weight</th><th class="r hide-sm">Counter</th><th>Result</th></tr></thead><tbody>${t.rows.map((r) => html`<tr><td class="mono" style="font-size:13px">${r.code}</td><td class="hide-sm"><${Hex} v=${r.pseud} n=${5} light /></td><td class="r num">${fmt(r.weight)}</td><td class="r num hide-sm">${String(r.nonce)}</td><td>${r.status === 'ok' ? html`<span class="row" style="gap:6px"><${Check} s=${18} /> Counted</span>` : r.status === 'replaced' ? html`<${Chip} c="orange">Valid, replaced by a newer vote<//>` : r.status === 'run' ? html`<span class="row" style="gap:6px"><span class="spinner dark"></span> Checking proofs</span>` : r.status === 'bad' ? html`<span class="row" style="gap:6px"><${Check} st="bad" s=${18} /> ${r.reason}</span>` : html`<span class="faint">Waiting</span>`}</td></tr>`)}</tbody></table></div>
+        ${ph === 'ready' ? html`<button class="btn" onClick=${() => E.runCount()}><${Icon} n="sigma" s=${17} /> Start counting</button>` : html`<div class="scroll-x"><table class="tbl"><thead><tr><th>Ballot</th><th class="hide-sm">Voter</th><th class="r">Weight</th><th class="r hide-sm">Counter</th><th>Result</th></tr></thead><tbody>${t.rows.map((r) => html`<tr><td class="mono" style="font-size:13px">${r.code}</td><td class="hide-sm"><${Hex} v=${r.pseud} n=${5} light /></td><td class="r num"><${Wt} w=${r.weight} /></td><td class="r num hide-sm">${String(r.nonce)}</td><td>${r.status === 'ok' ? html`<span class="row" style="gap:6px"><${Check} s=${18} /> Counted</span>` : r.status === 'replaced' ? html`<${Chip} c="orange">Valid, replaced by a newer vote<//>` : r.status === 'run' ? html`<span class="row" style="gap:6px"><span class="spinner dark"></span> Checking proofs</span>` : r.status === 'bad' ? html`<span class="row" style="gap:6px"><${Check} st="bad" s=${18} /> ${r.reason}</span>` : html`<span class="faint">Waiting</span>`}</td></tr>`)}</tbody></table></div>
           ${at >= 2 && html`<p class="small muted mt12">${counted} ballot${counted === 1 ? '' : 's'} counted, carrying ${fmt(t.castWeight)} ${L.ignoreWeight ? 'votes' : 'shares'}.</p>`}`}
       <//>
       <${PipeStep} n="2" state=${stState(2, 3)} title="Add up, still sealed" sub=${`Each sealed ballot is multiplied by its weight (${weightLabel}) and added up. Anyone can redo this from the ballot box.`}>
         ${at < 2 ? html`<p class="faint">Waits for step 1.</p>` : html`
           <div class="formula" style="font-size:19px;margin-bottom:14px">Σ <i>w</i>ᵢ · Enc(<i>v</i>ᵢ) = Enc(Σ <i>w</i>ᵢ<i>v</i>ᵢ)</div>
           <div class="scroll-x"><div class="mat" style=${{ gridTemplateColumns: `120px repeat(${adm.length}, minmax(70px, 1fr)) 24px minmax(110px, 1.4fr)` }}>
-            <span></span>${adm.map((v) => html`<span class="hd">× ${fmt(E.effWeight(v.b.weight))}</span>`)}<span></span><span class="hd">Sealed total</span>
+            <span></span>${adm.map((v) => { const e = E.effWeight(v.b.weight); return html`<span class="hd">× ${fmt(e)}${e < v.b.weight && !L.ignoreWeight ? html`<span class="capnote">capped from ${fmt(v.b.weight)}</span>` : ''}</span>`; })}<span></span><span class="hd">Sealed total</span>
             ${OPTIONS.map((o, j) => html`<b style="font-weight:500">${o.label}</b>${adm.map((v) => html`<span class=${'cell' + (at >= 3 ? ' fold' : '')}>${C.ph(v.cts[j].c2).slice(0, 10)}</span>`)}<span class="faint" style="text-align:center">=</span><span class="cell sum">${t.aggHex ? html`<${Scramble} text=${t.aggHex[j].c2.slice(0, 18)} cls="" />` : '…'}</span>`)}
           </div></div>
           ${t.aggHex && html`<${Hood} title="Sealed totals" sub="per option, compressed G2 points">${OPTIONS.map((o, j) => html`<div class="sec">${o.label}</div><${KV} rows=${[['C₁', html`<${Hex} v=${t.aggHex[j].c1} />`], ['C₂', html`<${Hex} v=${t.aggHex[j].c2} />`]]} />`)}<//>`}`}
@@ -483,6 +523,8 @@ function Results({ go }) {
   const unit = L.ignoreWeight ? 'votes' : 'shares';
   const baseLabel = E.BASES.find((b) => b[0] === r.base)[1];
   const rows = [['For', res.votesFor, res.pFor], ['Against', res.votesAgainst, res.pAgainst]];
+  const raw = E.result('cast', false);
+  const capped = L.capValue != null ? (s.tally.admitted || []).filter((v) => v.b.weight > BigInt(L.capValue)) : [];
   return html`<div class="page">
     <${Head} eyebrow="Step 5 · Results" title="The result" lede="MIXX's result page, computed from the opened totals and the public attendance list with the same rules as today." />
     <div class="grid g-2">
@@ -493,15 +535,15 @@ function Results({ go }) {
         <hr class="sep" />
         <div><div class="set-t">Majority base</div><div class="set-d">Recalculated from the opened totals. No new decryption needed.</div><div class="mt12"><${Seg} value=${r.base} options=${E.BASES} onChange=${(v) => { r.base = v; E.emit(); }} /></div></div>
         <div style="height:14px"></div>
-        <div class="set"><div class="set-l"><div class="set-t">Non-voters count as abstention</div><div class="set-d">Present but did not vote: ${fmt(res.present - E.result(r.base, false).cast)} ${unit}${r.nonVoterAbstain ? ', counted as abstentions' : ', not counted'}.</div></div><div class="set-r"><${Switch} on=${r.nonVoterAbstain} label="Non-voters count as abstention" onChange=${(v) => { r.nonVoterAbstain = v; E.emit(); }} /></div></div>
+        <div class="set"><div class="set-l"><div class="set-t">Non-voters count as abstention</div><div class="set-d">Present but did not vote: ${fmt(res.nonVoters)} ${unit}${r.nonVoterAbstain ? ', counted as abstentions' : ', not counted'}.</div></div><div class="set-r"><${Switch} on=${r.nonVoterAbstain} label="Non-voters count as abstention" onChange=${(v) => { r.nonVoterAbstain = v; E.emit(); }} /></div></div>
       </div>
       <div class="stack">
         <div class="tiles" style="grid-template-columns:repeat(2,minmax(0,1fr))">${[['All votes', res.all, 'allowed to vote'], ['Present', res.present, 'in the room or by proxy'], ['Votes cast', res.cast, r.nonVoterAbstain ? 'incl. non-voters' : 'incl. abstentions and chair'], ['Abstentions', res.abstain, r.nonVoterAbstain ? 'incl. non-voters' : 'chose to abstain']].map(([l, v, d]) => html`<div class="tile"><span>${l}</span><b class="num">${fmt(v)}</b><small>${d}</small></div>`)}</div>
-        <div class="card"><div class="lockbox"><span class="ic"><${Icon} n="lock" s=${18} /></span><div><b>Fixed at close</b><p class="small muted mt8">${L.ignoreWeight ? 'One vote per attendee' : 'Weighted by shares'}${L.capValue != null ? `, capped at ${fmt(L.capValue)} (${L.capPct} % of ${L.capMode === 'all' ? 'all' : 'present'} votes)` : ', no cap'}. These shaped the sealed sums, so they cannot change now: a second opening with other weights would reveal individual votes.</p></div></div></div>
+        <div class="card"><div class="lockbox"><span class="ic"><${Icon} n="lock" s=${18} /></span><div><b>Fixed at close</b><p class="small muted mt8">${L.ignoreWeight ? 'One vote per attendee' : 'Weighted by shares'}${L.capValue != null ? `, capped at ${fmt(L.capValue)} (${L.capPct} % of ${L.capMode === 'all' ? 'all' : 'present'} votes)` : ', no cap'}. These shaped the sealed sums, so they cannot change now: a second opening with other weights would reveal individual votes.</p>${capped.length > 0 && html`<p class="small mt8">${capped.map((v, i) => html`${i ? ', ' : ''}<b>${E.person(v.b.attendeeId).name}</b> counted <span class="wt-cap"><s>${fmt(v.b.weight)}</s> ${fmt(L.capValue)}</span>`)} because of the cap.</p>`}</div></div></div>
       </div>
     </div>
     <div class="card mt24">
-      <div class="card-h"><div><div class="card-t">${res.all === 300 && res.present === 240 && E.result('cast', false).cast === 220 && res.votesFor === 140 && res.votesAgainst === 50 ? 'Same numbers as your worked example' : 'All four majority bases'}</div><div class="card-s">All four majority bases at once, computed from the opened totals${r.nonVoterAbstain ? ' with non-voters counted as abstention' : ''}. Click a row to use it.</div></div></div>
+      <div class="card-h"><div><div class="card-t">${res.all === 300 && res.present === 240 && raw.votesAgainst === 50 && ((raw.cast === 220 && raw.votesFor === 140) || (L.capValue === 75 && raw.cast === 195 && raw.votesFor === 115)) ? (L.capValue === 75 ? 'Same numbers as the cap example in your guide' : 'Same numbers as your worked example') : 'All four majority bases'}</div><div class="card-s">All four majority bases at once, computed from the opened totals${r.nonVoterAbstain ? ' with non-voters counted as abstention' : ''}. Click a row to use it.</div></div></div>
       <div class="scroll-x"><table class="tbl cmp"><thead><tr><th>Majority base</th><th class="r">Divides by</th><th class="r">For</th><th class="r">Against</th><th>Outcome</th></tr></thead><tbody>${E.BASES.map(([k, label]) => { const x = E.result(k); return html`<tr class=${r.base === k ? 'on' : ''} style="cursor:pointer" onClick=${() => { r.base = k; E.emit(); }}><td>${label}</td><td class="r num">${fmt(x.denom)}</td><td class="r num">${E.pct(x.pFor)}</td><td class="r num">${E.pct(x.pAgainst)}</td><td>${x.adopted ? html`<${Chip} c="green">Adopted<//>` : html`<${Chip} c="red">Not adopted<//>`}</td></tr>`; })}</tbody></table></div>
     </div>
     <div class="next"><button class="btn lg" onClick=${() => go('verify')}>Verify this result <${Icon} n="chev" s=${16} /></button></div>
