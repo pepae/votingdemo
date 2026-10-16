@@ -1,0 +1,13 @@
+{
+  "name": "votingdemo",
+  "private": true,
+  "type": "module",
+  "description": "Concept demo: encrypted, verifiable voting for general assemblies",
+  "scripts": {
+    "test": "node tests/vectors.test.mjs"
+  },
+  "devDependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  }
+}

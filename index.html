@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex" />
+  <title>Verifiable voting demo</title>
+  <meta name="description" content="Concept demo: encrypted, verifiable voting for general assemblies, with real threshold encryption and zero-knowledge proofs running in the browser." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Cpath d='M10 15h12v10H10z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M12.5 15v-3a3.5 3.5 0 0 1 7 0v3' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "htm/preact/standalone": "https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.module.js",
+      "@noble/curves/": "https://cdn.jsdelivr.net/npm/@noble/curves@2.4.0/",
+      "@noble/hashes/": "https://cdn.jsdelivr.net/npm/@noble/hashes@2.4.0/"
+    }
+  }
+  </script>
+  <style>
+    .boot { min-height: 70vh; display: grid; place-items: center; text-align: center; color: #86868b; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; padding: 24px; }
+    .boot b { display: block; color: #1d1d1f; font-size: 17px; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div id="app"><div class="boot"><div><b>Loading the cryptography…</b>BLS12-381, threshold ElGamal and zero-knowledge proofs, all running in this page.</div></div></div>
+  <script type="module" src="js/app.js"></script>
+  <script>
+    setTimeout(function () {
+      if (window.__demoReady) return;
+      var el = document.querySelector('#app .boot');
+      if (el) el.innerHTML = '<div><b>Still loading</b>The demo loads its crypto libraries from cdn.jsdelivr.net. Check the connection and reload. It needs a current browser.</div>';
+    }, 12000);
+  </script>
+</body>
+</html>
