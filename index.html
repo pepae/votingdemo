@@ -24,10 +24,26 @@
   <style>
     .boot { min-height: 70vh; display: grid; place-items: center; text-align: center; color: #86868b; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; padding: 24px; }
     .boot b { display: block; color: #1d1d1f; font-size: 17px; margin-bottom: 4px; }
+    .oops { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 100; display: flex; gap: 10px; align-items: center; width: max-content; max-width: calc(100vw - 32px); padding: 12px 12px 12px 18px; border-radius: 14px; background: #1d1d1f; color: #fff; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+    .oops[hidden] { display: none; }
+    .oops button { flex: none; border: 0; border-radius: 980px; padding: 6px 12px; background: rgba(255, 255, 255, .16); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   </style>
 </head>
 <body>
   <div id="app"><div class="boot"><div><b>Loading the cryptography…</b>BLS12-381, threshold ElGamal and zero-knowledge proofs, all running in this page.</div></div></div>
+  <div class="oops" id="oops" role="alert" hidden><span id="oops-t"></span><button type="button" onclick="location.reload()">Reload</button><button type="button" aria-label="Dismiss" onclick="this.parentNode.hidden = true">&#x2715;</button></div>
+  <script>
+    // Errors from the demo's own code show up here instead of leaving a spinner running.
+    (function () {
+      function ours(s) { return String(s || '').indexOf(location.origin) !== -1; }
+      function show(msg) {
+        document.getElementById('oops-t').textContent = 'Something went wrong: ' + msg + '. The step was reset, so you can run it again.';
+        document.getElementById('oops').hidden = false;
+      }
+      addEventListener('error', function (e) { if (e.message && ours(e.filename)) show(e.message); });
+      addEventListener('unhandledrejection', function (e) { var r = e.reason; if (r && ours(r.stack)) show(r.message || String(r)); });
+    })();
+  </script>
   <script type="module" src="js/app.js"></script>
   <script>
     setTimeout(function () {
