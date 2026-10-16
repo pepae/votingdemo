@@ -46,7 +46,23 @@ const listeners = new Set();
 export const S = () => state;
 export const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 export function emit() { for (const l of listeners) l(); }
-export const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+// Short pauses pace the animations. Browsers throttle timers in hidden tabs to once a
+// second or even once a minute, so a hidden tab skips the pause and keeps working.
+const yieldNow = () => new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => { ch.port1.close(); r(); }; ch.port2.postMessage(0); });
+export const tick = (ms = 0) => {
+  if (typeof document === 'undefined' || typeof MessageChannel === 'undefined') return new Promise((r) => setTimeout(r, ms));
+  if (document.hidden) return yieldNow();
+  return new Promise((r) => {
+    const done = () => { clearTimeout(id); document.removeEventListener('visibilitychange', done); r(); };
+    const id = setTimeout(done, ms);
+    document.addEventListener('visibilitychange', done);
+  });
+};
+// A failed step never leaves a spinner behind: it is reset so it can be run again, and
+// the error is passed on so the page can show it.
+async function guarded(run, undo) {
+  try { return await run(); } catch (err) { undo(); emit(); throw err; }
+}
 export const now = () => performance.now();
 
 function fresh() {
@@ -114,6 +130,9 @@ export function turnout() {
 // ---------------------------------------------------------------- key ceremony (Feldman DKG)
 export async function runKeyCeremony() {
   if (state.dkg?.status === 'running') return;
+  return guarded(keyCeremony, () => { state.dkg = null; });
+}
+async function keyCeremony() {
   const t0 = now();
   const dkg = state.dkg = { status: 'running', phase: 'deal', members: KEYHOLDERS.map((k) => ({ id: k.id, state: 'wait', verified: 0 })), messages: 0, edges: [] };
   emit();
@@ -158,9 +177,12 @@ export function openVoting() {
 }
 
 // ---------------------------------------------------------------- casting a vote (voter's phone)
-export async function castVote(id, choice, { fast = false } = {}) {
+export async function castVote(id, choice, opts = {}) {
   const a = person(id);
   if (state.status !== 'open' || !isPresent(a)) return;
+  return guarded(() => seal(a, id, choice, opts), () => { state.phone.phase = 'pick'; state.phone.steps = {}; });
+}
+async function seal(a, id, choice, { fast = false } = {}) {
   const ph = state.phone;
   ph.who = id; ph.phase = 'sealing'; ph.steps = {}; ph.code = null; ph.cts = null;
   emit();
@@ -247,6 +269,9 @@ export function toggleParticipant(id) {
 export async function runCount() {
   const t = state.tally;
   if (!t || t.phase !== 'ready') return;
+  return guarded(() => count(t), () => { t.phase = 'ready'; t.rows = []; });
+}
+async function count(t) {
   const mpk = state.dkg.mpk;
   // 1. Admission: every ballot is checked independently, then the latest per voter wins.
   t.phase = 'admission';
@@ -284,6 +309,9 @@ export async function runCount() {
 export async function runDecrypt() {
   const t = state.tally;
   if (!t || t.phase !== 'aggregate-done' || t.participants.length < T) return;
+  return guarded(() => decrypt(t), () => { t.phase = 'aggregate-done'; t.shares = {}; });
+}
+async function decrypt(t) {
   t.phase = 'decrypt'; t.shares = {}; emit();
   for (const id of t.participants) {
     const kh = state.keyholders[id - 1];
@@ -308,9 +336,11 @@ export async function runDecrypt() {
   const t0 = now();
   const tbl = C.bsgsTable(t.bound);
   t.used = t.participants.filter((id) => t.shares[id].every((s) => s.ok)).slice(0, T);
+  if (t.used.length < T) throw new Error(`only ${t.used.length} keyholders gave valid shares, ${T} are needed`);
   t.lambdas = t.used.map((id) => C.lagrange(id, t.used));
   t.taus = t.agg.map((c, j) => c.c2.subtract(C.combineShares(t.used.map((id) => [id, t.shares[id][j].sigma]))));
   t.totals = t.taus.map((tau) => C.bsgs(tau, tbl));
+  if (t.totals.some((x) => x === null)) throw new Error('a total was not found in the search range');
   t.recoverMs = now() - t0;
   t.sumOk = t.totals.reduce((s, x) => s + x, 0n) === t.bound;
   t.phase = 'done';
@@ -342,8 +372,11 @@ export const pct = (x) => `${Math.round(x * 100)} %`;
 
 // ---------------------------------------------------------------- independent verification
 export async function runVerify() {
-  if (state.status !== 'counted') return;
+  if (state.status !== 'counted' || state.verify?.running) return;
   const v = state.verify = { running: true, checks: [], started: now() };
+  return guarded(() => verify(v), () => { state.verify = null; });
+}
+async function verify(v) {
   const t = state.tally, dkg = state.dkg;
   const add = (key, title) => { const c = { key, title, status: 'run', detail: '', ms: 0 }; v.checks.push(c); emit(); return c; };
   const done = (c, ok, detail, t0) => { c.status = ok ? 'ok' : 'bad'; c.detail = detail; c.ms = now() - t0; emit(); };
