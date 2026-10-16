@@ -363,10 +363,14 @@ export function result(base = state.rules.base, nonVoter = state.rules.nonVoterA
   let abstain = ab + (chair === 'abstain' ? ch : 0);
   let cast = Number(t.castWeight);
   const castWo = cast - abstain;
-  if (nonVoter) { abstain = s.present - cast + abstain; cast = s.present; }
+  // Present attendees without a counted ballot, at the weight they would count with.
+  // (MIXX computes this as present - cast, which also adds whatever the cap cut off.)
+  const voted = new Set((t.admitted || []).map((v) => v.b.attendeeId));
+  const nonVoters = state.attendees.filter((a) => isPresent(a) && !voted.has(a.id)).reduce((n, a) => n + Number(effWeight(BigInt(a.shares))), 0);
+  if (nonVoter) { abstain += nonVoters; cast += nonVoters; }
   const denom = { cast, castWo, present: s.present, all: s.all }[base];
   const p = (v) => (denom > 0 ? v / denom : 0);
-  return { all: s.all, present: s.present, cast, castWo, abstain, votesFor, votesAgainst, chairVotes: ch, denom, pFor: p(votesFor), pAgainst: p(votesAgainst), adopted: p(votesFor) > 0.5 };
+  return { all: s.all, present: s.present, cast, castWo, abstain, nonVoters, votesFor, votesAgainst, chairVotes: ch, denom, pFor: p(votesFor), pAgainst: p(votesAgainst), adopted: p(votesFor) > 0.5 };
 }
 export const pct = (x) => `${Math.round(x * 100)} %`;
 
